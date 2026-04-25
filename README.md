@@ -45,7 +45,7 @@ Le projet prévoit l'implémentation des étapes suivantes pour atteindre des pe
 - **Messagerie :** [Apache Kafka](https://kafka.apache.org/) (via la bibliothèque `confluent-kafka-go`)
 - **Base de données :** [MySQL](https://www.mysql.com/)
 
-## 📦 Installation et Lancement
+## 📦 Installation
 
 ### Prérequis
 - Go 1.21+
@@ -60,13 +60,4 @@ cd TP3_System
 
 # Installer les dépendances
 go mod download
-```
-
-### Configuration
-Modifiez les variables d'environnement ou le fichier de configuration pour pointer vers vos instances Kafka et MySQL.
-
-### Exécution
-```bash
-# Lancer le service d'application
-go run main.go
 ```
