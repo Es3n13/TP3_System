@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-processor
+  labels:
+    app: user-processor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-processor
+  template:
+    metadata:
+      labels:
+        app: user-processor
+    spec:
+      containers:
+        - name: user-processor
+          # Update this image path to your actual Docker Hub username
+          image: rasmile/user-processor:latest
+          imagePullPolicy: Always
+          env:
+            # These are provided as a best practice, 
+            # though your current main.go uses hardcoded strings.
+            - name: MYSQL_DSN
+              value: "root:pass@tcp(mysql:3306)/uqar"
+            - name: KAFKA_BROKER
+              value: "kafka-0.kafka:9092"
+            - name: KAFKA_INPUT_TOPIC
+              value: "users"
+            - name: KAFKA_OUTPUT_TOPIC
+              value: "notification"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"

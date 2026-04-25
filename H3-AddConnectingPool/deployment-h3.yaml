@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-processor-h3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-processor-h3
+  template:
+    metadata:
+      labels:
+        app: user-processor-h3
+    spec:
+      containers:
+        - name: processor
+          image: rasmile/user-processor-h3:latest
+          imagePullPolicy: Always
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka-0.kafka:9092"
+            - name: MYSQL_DSN
+              value: "root:pass@tcp(mysql:3306)/uqar"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-processor-h3
+spec:
+  selector:
+    app: user-processor-h3
+  ports:
+    - port: 80
+      targetPort: 8080
