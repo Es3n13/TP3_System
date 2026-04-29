@@ -1,178 +1,264 @@
 package main
 
 import (
-	"context"
-	"database/sql"
-	"encoding/json"
-	"log"
-	"os"
-	"sync"
-	"sync/atomic"
-	"time"
+    "database/sql"
+    "encoding/json"
+    "fmt"
+    "log"
+    "os"
+    "strings"
+    "sync"
+    "sync/atomic"
+    "time"
 
-	_ "github.com/go-sql-driver/mysql"
-	"github.com/segmentio/kafka-go"
+    "github.com/confluentinc/confluent-kafka-go/v2/kafka"
+    _ "github.com/go-sql-driver/mysql"
 )
 
+// --- Memory Evolution: Concrete structs to eliminate interface boxing ---
 type InputUser struct {
-	Nom string `json:"nom"`
+    Nom string `json:"nom"`
 }
 
 type OutputUser struct {
-	Nom   string `json:"nom"`
-	Email string `json:"email,omitempty"`
+    Nom   string `json:"nom"`
+    Email string `json:"email,omitempty"`
 }
 
-var (
-	emailCache  sync.Map
-	cacheHits   atomic.Int64
-	cacheMisses atomic.Int64
-	dbQueries   atomic.Int64
+type Task struct {
+    Key  []byte
+    User InputUser
+}
+
+var totalProduced atomic.Int64
+
+const (
+    inputTopic      = "users"
+    outputTopic     = "notification"
+    consumerGroupID = "user-processor-h4-group"
+    workerCount     = 8
+    bufferCapacity  = 1000 
 )
 
 func main() {
-	log.Println("Démarrage user-processor H2 (concurrent + cache in-memory)")
+    log.Println("🏎️ H4 Racing Bike: High-Performance Engine")
 
-	mysqlDSN := getenv("MYSQL_DSN", "root:pass@tcp(mysql:3306)/uqar")
-	kafkaBroker := getenv("KAFKA_BROKER", "kafka-0.kafka:9092")
-	inputTopic := getenv("KAFKA_INPUT_TOPIC", "users")
-	outputTopic := getenv("KAFKA_OUTPUT_TOPIC", "notification")
-	groupID := getenv("KAFKA_GROUP_ID", "user-processor-h2-group")
+    // ⏱️ Variables for the real-time stopwatch
+    var startTime time.Time
+    var firstMessageReceived bool
 
-	db, err := sql.Open("mysql", mysqlDSN)
-	if err != nil {
-		log.Fatal("Erreur connexion MySQL: ", err)
-	}
-	defer db.Close()
+    kafkaServers := os.Getenv("KAFKA_BOOTSTRAP_SERVERS")
+    if kafkaServers == "" {
+        kafkaServers = "kafka-0.kafka:9092"
+    }
 
-	db.SetMaxOpenConns(20)
-	db.SetMaxIdleConns(20)
-	db.SetConnMaxLifetime(5 * time.Minute)
+    dsn := os.Getenv("MYSQL_DSN")
+    if dsn == "" {
+        dsn = "root:pass@tcp(mysql:3306)/uqar"
+    }
 
-	if err := db.Ping(); err != nil {
-		log.Fatal("Impossible de joindre MySQL: ", err)
-	}
-	log.Println("Connexion MySQL OK")
+    db, err := sql.Open("mysql", dsn)
+    if err != nil {
+        log.Fatal("DB:", err)
+    }
+    defer db.Close()
 
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        []string{kafkaBroker},
-		Topic:          inputTopic,
-		GroupID:        groupID,
-		MinBytes:       10e3,
-		MaxBytes:       10e6,
-		CommitInterval: time.Second,
-	})
-	defer reader.Close()
+    db.SetMaxOpenConns(50)
+    db.SetMaxIdleConns(25)
 
-	writer := &kafka.Writer{
-		Addr:     kafka.TCP(kafkaBroker),
-		Topic:    outputTopic,
-		Balancer: &kafka.LeastBytes{},
-	}
-	defer writer.Close()
+    producer, err := kafka.NewProducer(&kafka.ConfigMap{
+        "bootstrap.servers":  kafkaServers,
+        "linger.ms":          10,
+        "batch.num.messages": 10000,
+    })
+    if err != nil {
+        log.Fatal("Producer:", err)
+    }
+    defer producer.Close()
 
-	jobs := make(chan kafka.Message, 200)
-	workerCount := 10
+    go func() {
+        for e := range producer.Events() {
+            switch ev := e.(type) {
+            case *kafka.Message:
+                if ev.TopicPartition.Error != nil {
+                    log.Printf("Delivery failed: %v", ev.TopicPartition.Error)
+                }
+            }
+        }
+    }()
 
-	for i := 0; i < workerCount; i++ {
-		go worker(i, db, writer, jobs)
-	}
+    consumer, err := kafka.NewConsumer(&kafka.ConfigMap{
+        "bootstrap.servers": kafkaServers,
+        "group.id":          consumerGroupID,
+        "auto.offset.reset": "earliest",
+    })
+    if err != nil {
+        log.Fatal("Consumer:", err)
+    }
+    defer consumer.Close()
 
-	go logStats()
+    if err := consumer.SubscribeTopics([]string{inputTopic}, nil); err != nil {
+        log.Fatal("Subscribe:", err)
+    }
 
-	log.Printf("Kafka prêt, %d workers démarrés", workerCount)
+    userCache := make(map[string]string)
+    var cacheMu sync.RWMutex
 
-	for {
-		msg, err := reader.ReadMessage(context.Background())
-		if err != nil {
-			log.Println("Erreur lecture Kafka:", err)
-			continue
-		}
-		jobs <- msg
-	}
+    tasks := make([]Task, 0, bufferCapacity)
+    var endKey []byte
+
+	consumeLoop:
+    for {
+        ev := consumer.Poll(100)
+        if ev == nil {
+            continue
+        }
+        switch e := ev.(type) {
+        case *kafka.Message:
+            if e.TopicPartition.Error != nil {
+                continue
+            }
+
+            // ⏱️ START STOPWATCH only on the very first real message
+            if !firstMessageReceived {
+                startTime = time.Now()
+                firstMessageReceived = true
+            }
+            if string(e.Value) == "%%END%%" {
+                endKey = e.Key
+                break consumeLoop
+            }
+
+            var input InputUser
+            if err := json.Unmarshal(e.Value, &input); err != nil {
+                continue
+            }
+            tasks = append(tasks, Task{Key: e.Key, User: input})
+            if len(tasks) >= bufferCapacity {
+                processH4(tasks, db, producer, userCache, &cacheMu)
+                tasks = tasks[:0]
+            }
+        }
+    }
+
+    if len(tasks) > 0 {
+        processH4(tasks, db, producer, userCache, &cacheMu)
+    }
+
+    // 🏁 Stop stopwatch immediately after processing is done
+    duration := time.Since(startTime)
+
+    log.Printf("Forwarding %%END%% to %s", outputTopic)
+    producer.Produce(&kafka.Message{
+        TopicPartition: kafka.TopicPartition{Topic: stringPtr(outputTopic), Partition: kafka.PartitionAny},
+        Key:            endKey,
+        Value:          []byte("%%END%%"),
+    }, nil)
+    producer.Flush(5000)
+
+    total := totalProduced.Load()
+    var msgPerSec float64
+    if duration.Seconds() > 0 {
+        msgPerSec = float64(total) / duration.Seconds()
+    }
+
+    log.Printf("✅ H4 Racing Bike terminé | total envoyé: %d", total)
+    log.Printf("⏱️ Temps de traitement RÉEL: %v", duration)
+    log.Printf("🚀 Performance: %.2f messages/sec", msgPerSec)
 }
 
-func worker(id int, db *sql.DB, writer *kafka.Writer, jobs <-chan kafka.Message) {
-	log.Printf("Worker %d démarré", id)
+func processH4(tasks []Task, db *sql.DB, producer *kafka.Producer, cache map[string]string, mu *sync.RWMutex) {
+    missing := make([]string, 0, len(tasks))
+    mu.RLock()
+    for _, t := range tasks {
+        if _, ok := cache[t.User.Nom]; !ok {
+            missing = append(missing, t.User.Nom)
+        }
+    }
+    mu.RUnlock()
 
-	for msg := range jobs {
-		raw := string(msg.Value)
+    if len(missing) > 0 {
+        fillCache(db, cache, mu, missing)
+    }
+    var cursor atomic.Uint64
+    var wg sync.WaitGroup
+    numTasks := uint64(len(tasks))
 
-		if raw == "%%END%%" {
-			log.Printf("Worker %d forward %%END%%", id)
-			if err := writer.WriteMessages(context.Background(), kafka.Message{Value: msg.Value}); err != nil {
-				log.Printf("Worker %d erreur write END: %v", id, err)
-			}
-			continue
-		}
-
-		var input InputUser
-		if err := json.Unmarshal(msg.Value, &input); err != nil {
-			log.Printf("Worker %d erreur JSON: %v", id, err)
-			continue
-		}
-
-		start := time.Now()
-		output := OutputUser{Nom: input.Nom}
-
-		if email, ok := emailCache.Load(input.Nom); ok {
-			output.Email = email.(string)
-			cacheHits.Add(1)
-			log.Printf("Worker %d CACHE HIT %s", id, input.Nom)
-		} else {
-			cacheMisses.Add(1)
-
-			var email string
-			err := db.QueryRow("SELECT email FROM etudiants WHERE nom = ?", input.Nom).Scan(&email)
-			dbQueries.Add(1)
-
-			if err == nil {
-				emailCache.Store(input.Nom, email)
-				output.Email = email
-				log.Printf("Worker %d CACHE MISS -> DB HIT %s", id, input.Nom)
-			} else {
-				log.Printf("Worker %d CACHE MISS -> DB MISS %s : %v", id, input.Nom, err)
-			}
-		}
-
-		enriched, err := json.Marshal(output)
-		if err != nil {
-			log.Printf("Worker %d erreur marshal: %v", id, err)
-			continue
-		}
-
-		if err := writer.WriteMessages(context.Background(), kafka.Message{Value: enriched}); err != nil {
-			log.Printf("Worker %d erreur write Kafka: %v", id, err)
-			continue
-		}
-
-		log.Printf("Worker %d traité %s en %s", id, input.Nom, time.Since(start))
-	}
+    for i := 0; i < workerCount; i++ {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            for {
+                idx := cursor.Add(1) - 1
+                if idx >= numTasks {
+                    break
+                }
+                task := tasks[idx]
+                email := getEmailFromCache(cache, mu, task.User.Nom)
+                outMsg := createKafkaMessage(task.Key, task.User.Nom, email)
+                produceMessage(producer, outMsg)
+            }
+        }()
+    }
+    wg.Wait()
 }
 
-func logStats() {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
+func fillCache(db *sql.DB, cache map[string]string, mu *sync.RWMutex, names []string) {
+    uniqueNames := make(map[string]struct{})
+    for _, n := range names {
+        uniqueNames[n] = struct{}{}
+    }
+    distinct := make([]string, 0, len(uniqueNames))
+    for n := range uniqueNames {
+        distinct = append(distinct, n)
+    }
 
-	for range ticker.C {
-		hits := cacheHits.Load()
-		misses := cacheMisses.Load()
-		dbq := dbQueries.Load()
-		total := hits + misses
+    placeholders := make([]string, len(distinct))
+    args := make([]any, len(distinct))
+    for i, n := range distinct {
+        placeholders[i] = "?"
+        args[i] = n
+    }
 
-		hitRate := 0.0
-		if total > 0 {
-			hitRate = float64(hits) / float64(total) * 100
-		}
+    query := fmt.Sprintf("SELECT nom, email FROM etudiants WHERE nom IN (%s)", strings.Join(placeholders, ","))
+    rows, err := db.Query(query, args...)
+    if err != nil {
+        log.Printf("Cache fill error: %v", err)
+        return
+    }
+    defer rows.Close()
 
-		log.Printf("STATS CACHE | hits=%d misses=%d hit-rate=%.1f%% db-queries=%d total=%d",
-			hits, misses, hitRate, dbq, total)
-	}
+    mu.Lock()
+    for rows.Next() {
+        var nom, email string
+        if err := rows.Scan(&nom, &email); err == nil {
+            cache[nom] = email
+        }
+    }
+    mu.Unlock()
+}
+func getEmailFromCache(cache map[string]string, mu *sync.RWMutex, nom string) string {
+    mu.RLock()
+    defer mu.RUnlock()
+    return cache[nom]
 }
 
-func getenv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
+func createKafkaMessage(key []byte, nom, email string) kafka.Message {
+    out := OutputUser{Nom: nom, Email: email}
+    val, _ := json.Marshal(out)
+    return kafka.Message{
+        TopicPartition: kafka.TopicPartition{Topic: stringPtr(outputTopic), Partition: kafka.PartitionAny},
+        Key:            key,
+        Value:          val,
+    }
+}
+func produceMessage(producer *kafka.Producer, msg kafka.Message) {
+    if err := producer.Produce(&msg, nil); err != nil {
+        log.Printf("Produce error: %v", err)
+    }
+    totalProduced.Add(1)
+}
+
+func stringPtr(s string) *string {
+    return &s
 }

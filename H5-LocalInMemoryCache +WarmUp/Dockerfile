@@ -1,18 +1,28 @@
 FROM golang:1.25.7-alpine AS builder
 
+# Outils nécessaires pour CGO
+RUN apk add --no-cache build-base
+
 WORKDIR /app
 
+# Dépendances Go
 COPY go.mod go.sum ./
 RUN go mod download
 
+# Code source
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o user-processor-h3 main.go
 
+# Build pour Alpine/musl
+ENV CGO_ENABLED=1
+RUN go build -tags musl -o user-processor-h5 main.go
+
+# --- Final Stage ---
 FROM alpine:3.20
 
-RUN apk --no-cache add ca-certificates tzdata
-
+# Runtime librdkafka
+RUN apk add --no-cache librdkafka
 WORKDIR /root/
-COPY --from=builder /app/user-processor-h3 .
 
-CMD ["./user-processor-h3"]
+COPY --from=builder /app/user-processor-h5 .
+
+ENTRYPOINT ["./user-processor-h5"]

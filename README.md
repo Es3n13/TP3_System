@@ -1,63 +1,94 @@
-# Optimisation d'un Pipeline Distribué : TP3 Système
+# 🚀 TP3 : Optimisation d'un Pipeline de Données Distribué
 
-Ce projet explore l'optimisation progressive d'un pipeline de traitement de données distribué. L'objectif principal est d'identifier et de lever les goulots d'étranglement d'une architecture basée sur des files d'attente pour maximiser le débit et minimiser la latence.
+Ce projet documente l'évolution technique et l'optimisation d'un service d'enrichissement de données haute performance. L'objectif était de transformer un traitement séquentiel lent en un système capable de gérer des flux massifs de données avec une latence minimale.
 
-## 🎯 Objectif du Projet
+## 🏗️ Architecture du Système
+Le flux de données suit le schéma suivant :
+**Producteur Utilisateur** $\rightarrow$ **Kafka (Topic: users)** $\rightarrow$ **Service d'Enrichissement (Go)** $\rightarrow$ **Kafka (Topic: notification)** $\rightarrow$ **Consommateur**.
 
-Le système implémente un flux de données suivant ce schéma :
-**Producteur Utilisateur** $\rightarrow$ **Kafka** $\rightarrow$ **Service d'Application** $\rightarrow$ **Kafka** $\rightarrow$ **Consommateur**.
+Le cœur du projet réside dans l'optimisation du service Go, qui doit enrichir chaque utilisateur avec son email depuis une base de données MySQL avant de renvoyer le résultat.
 
-L'enjeu réside dans l'optimisation du *Service d'Application*, qui doit traiter les messages entrants, interagir avec une base de données MySQL, et transmettre les résultats vers un second topic Kafka.
+---
 
-## 🏗️ Architecture & Évolution Technique
+## 📈 Évolution des Optimisations (Le Chemin vers H5)
 
-Le projet est structuré autour d'une série d'hypothèses (H) visant à améliorer les performances de manière itérative.
+Le projet a été développé suivant une approche empirique : **Hypothèse $\rightarrow$ Implémentation $\rightarrow$ Mesure**.
 
-### 0. Baseline : Traitement Synchrone
-Le point de départ consiste en un traitement séquentiel : chaque message est lu, traité via une requête SQL unique, puis envoyé à Kafka avant de passer au message suivant. Cette approche est limitée par la latence réseau et le temps de réponse de la base de données.
+### 🔴 Baseline : Traitement Séquentiel
+*   **Approche :** Lecture d'un message $\rightarrow$ Requête SQL $\rightarrow$ Envoi Kafka $\rightarrow$ Message suivant.
+*   **Goulot d'étranglement :** Latence réseau et temps de réponse MySQL bloquant.
 
-### 1. H1 : Requêtes Concurrentes via Worker Pools
-Pour pallier la nature bloquante des appels DB, nous avons implémenté des **pools de travailleurs (worker pools)**. 
-- **Gain :** Le système peut désormais traiter plusieurs requêtes MySQL en parallèle, exploitant mieux les ressources CPU et réduisant le temps d'attente global.
+### 🟡 H1 : Parallélisation (Concurrent DB Queries)
+*   **Approche :** Implémentation de *Worker Pools* pour traiter plusieurs requêtes MySQL simultanément.
+*   **Gain :** Utilisation optimisée du CPU et réduction drastique du temps d'attente global.
 
-### 2. H2 : Processus de Batching
-L'optimisation s'est ensuite portée sur la réduction du nombre d'allers-retours avec l'infrastructure.
-- **Batching SQL :** Regroupement de plusieurs requêtes en une seule instruction pour réduire l'overhead du protocole MySQL.
-- **Tuning Kafka :** Optimisation des paramètres du producteur Kafka (ex: `linger.ms`, `batch.size`) pour envoyer des lots de messages plutôt que des messages individuels.
-- **Gain :** Augmentation significative du débit (*throughput*) grâce à la réduction des interruptions système et des appels réseau.
+### 🟡 H2 : Batching & Tuning Kafka
+*   **Approche :** Regroupement des messages en lots (*batches*) pour réduire le nombre d'allers-retours réseau et optimisation des paramètres Kafka (`batch.size`, `linger.ms`).
+*   **Gain :** Augmentation massive du débit (*throughput*).
 
-### 3. H3 : Connection Pooling & Pipeline à Deux Étapes
-Afin de stabiliser les performances sous haute charge, l'architecture a évolué vers un modèle plus sophistiqué :
-- **Connection Pooling :** Gestion optimisée des connexions MySQL pour éviter le coût de création/destruction fréquent des sessions.
-- **Pipeline à deux étapes :** Introduction d'une couche d'**Agrégateurs** qui regroupent les données avant de les distribuer aux **DB Workers**.
-- **Gain :** Meilleure gestion de la pression sur la base de données et fluidification du flux de données interne.
+### 🟡 H3 : Connection Pooling
+*   **Approche :** Mise en place d'un pool de connexions MySQL pour éliminer le coût de création/destruction des sessions TCP.
+*   **Gain :** Stabilisation de la latence sous haute charge.
 
-## 🚀 Roadmap : Optimisations Futures
+### 🟢 H4 : Mise en Cache Locale (In-Memory Caching)
+*   **Approche :** Utilisation d'une cache en mémoire pour stocker les résultats des requêtes fréquentes.
+*   **Gain :** Élimination quasi-totale des appels DB pour les utilisateurs récurrents.
 
-Le projet prévoit l'implémentation des étapes suivantes pour atteindre des performances optimales :
+### 🌟 H5 : Cache avec Stratégie de Warm-up (Final)
+*   **Approche :** Ajout d'une phase de pré-chargement (*Warm-up*) au démarrage du service pour remplir la cache avec les données les plus sollicitées.
+*   **Gain :** Suppression du pic de latence initial (*Cold Start*), assurant des performances maximales dès la première seconde.
 
-- **H4 : Mise en cache locale (In-Memory Caching)** : Implémentation d'une cache en mémoire pour stocker les résultats des requêtes fréquentes et éviter des appels redondants à MySQL.
-- **H5 : Warm-up de la Cache** : Stratégie de pré-chargement de la cache avec les données les plus sollicitées au démarrage du service pour éliminer le pic de latence initial (*cold start*).
+---
 
 ## 🛠️ Stack Technique
+*   **Langage :** [Go (Golang)](https://go.dev/)
+*   **Messagerie :** [Apache Kafka](https://kafka.apache.org/)
+*   **Base de données :** [MySQL](https://www.mysql.com/)
+*   **Architecture :** Event-Driven / Distributed Pipeline
 
-- **Langage :** [Go (Golang)](https://go.dev/)
-- **Messagerie :** [Apache Kafka](https://kafka.apache.org/) (via la bibliothèque `confluent-kafka-go`)
-- **Base de données :** [MySQL](https://www.mysql.com/)
+---
 
-## 📦 Installation
+## 🧪 Guide de Test et Installation
 
-### Prérequis
+### Pré-requis
 - Go 1.21+
-- Un cluster Kafka opérationnel
-- Une instance MySQL configurée
+- Un cluster Kubernetes opérationnel
+- Kafka et MySQL déployés sur le cluster
 
-### Installation
+### Installation & Déploiement
+1. **Cloner le dépôt :**
+   ```bash
+   git clone https://github.com/Es3n13/TP3_System.git
+   cd TP3_System
+   ```
+
+2. **Déployer les services :**
+   Utilisez vos fichiers YAML pour déployer MySQL, Kafka et le service de traitement.
+
+### Procédure de Test (Kubernetes)
+
+Pour tester le pipeline en temps réel et observer les optimisations, suivez ces étapes :
+
+**1. Monitoring des logs (Ouvrez 3 terminaux séparés) :**
+
+*   **Terminal 1 : Suivre le Producteur**
+    ```bash
+    kubectl logs -f user-producer-job-<POD_ID>
+    ```
+*   **Terminal 2 : Suivre le Consommateur (Notifications)**
+    ```bash
+    kubectl logs -f notification-consumer-deployment-<POD_ID> --tail=50
+    ```
+*   **Terminal 3 : Suivre le Processeur (H5)**
+    ```bash
+    kubectl logs -f user-processor-h5-<POD_ID>
+    ```
+
+**2. Lancer un batch de données :**
+Une fois que vos terminaux de logs sont prêts, déclenchez l'envoi des messages avec la commande suivante :
 ```bash
-# Cloner le dépôt
-git clone https://github.com/Es3n13/TP3_System.git
-cd TP3_System
-
-# Installer les dépendances
-go mod download
+kubectl replace --force -f user-producer.yaml
 ```
+
+### Validation des performances
+Observez le **Terminal 3 (Processeur)** : vous verrez les statistiques de Cache Warm up et du temps de traitement.
