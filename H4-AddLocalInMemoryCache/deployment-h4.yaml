@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-processor-h4
+  labels:
+    app: user-processor-h4
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: user-processor-h4
+  template:
+    metadata:
+      labels:
+        app: user-processor-h4
+    spec:
+      containers:
+      - name: user-processor-h4
+        image: rasmile/user-processor-h4:latest
+        imagePullPolicy: Always
+        env:
+        - name: MYSQL_DSN
+          value: "root:pass@tcp(mysql:3306)/uqar"
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka-0.kafka:9092"
+        - name: KAFKA_INPUT_TOPIC
+          value: "users"
+        - name: KAFKA_OUTPUT_TOPIC
+          value: "notification"
+        - name: KAFKA_GROUP_ID
+          value: "user-processor-h4-group"
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "256Mi"
+          limits:
+            cpu: "2000m"
+            memory: "1Gi"
