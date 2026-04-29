@@ -73,15 +73,15 @@ Pour tester le pipeline en temps réel et observer les optimisations, suivez ces
 
 *   **Terminal 1 : Suivre le Producteur**
     ```bash
-    kubectl logs -f user-producer-job-rrrwq
+    kubectl logs -f user-producer-job-<POD_ID>
     ```
 *   **Terminal 2 : Suivre le Consommateur (Notifications)**
     ```bash
-    kubectl logs -f notification-consumer-deployment-74b7445454-7bdjm --tail=50
+    kubectl logs -f notification-consumer-deployment-<POD_ID> --tail=50
     ```
 *   **Terminal 3 : Suivre le Processeur (H5)**
     ```bash
-    kubectl logs -f user-processor-h5-57657bf9b-kzxb7
+    kubectl logs -f user-processor-h5-<POD_ID>
     ```
 
 **2. Lancer un batch de données :**
@@ -91,4 +91,4 @@ kubectl replace --force -f user-producer.yaml
 ```
 
 ### Validation des performances
-Observez le **Terminal 3 (Processeur)** : vous verrez les statistiques de **Cache Hits** vs **Cache Misses** s'afficher toutes les 30 secondes, prouvant l'efficacité de l'optimisation H5.
+Observez le **Terminal 3 (Processeur)** : vous verrez les statistiques de Cache Warm up et du temps de traitement.
