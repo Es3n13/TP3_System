@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-processor-final
+  labels:
+    app: user-processor-final
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-processor-final
+  template:
+    metadata:
+      labels:
+        app: user-processor-final
+    spec:
+      containers:
+        - name: user-processor-final
+          image: rasmile/user-processor-final:latest
+          imagePullPolicy: Always
+          env:
+            - name: MYSQL_DSN
+              value: "root:pass@tcp(mysql:3306)/uqar"
+            - name: KAFKA_BROKER
+              value: "kafka-0.kafka:9092"
+            - name: KAFKA_INPUT_TOPIC
+              value: "users"
+            - name: KAFKA_OUTPUT_TOPIC
+              value: "notification"
+            - name: KAFKA_GROUP_ID
+              value: "user-processor-final-group"
+          resources:
+            requests:
+              cpu: "300m"
+              memory: "256Mi"
+            limits:
+              cpu: "2000m"
+              memory: "1Gi"
