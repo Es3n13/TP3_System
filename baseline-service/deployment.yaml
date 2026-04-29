@@ -5,7 +5,7 @@ metadata:
   labels:
     app: user-processor
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: user-processor
@@ -16,12 +16,9 @@ spec:
     spec:
       containers:
         - name: user-processor
-          # Update this image path to your actual Docker Hub username
           image: rasmile/user-processor:latest
           imagePullPolicy: Always
           env:
-            # These are provided as a best practice, 
-            # though your current main.go uses hardcoded strings.
             - name: MYSQL_DSN
               value: "root:pass@tcp(mysql:3306)/uqar"
             - name: KAFKA_BROKER

@@ -40,7 +40,7 @@ const (
 )
 
 func main() {
-    log.Println("🏎️ H5 Racing Bike: High-Performance Engine")
+    log.Println("🏎️ User Processor V.Finale")
 
     var startTime time.Time
     var firstMessageReceived bool
@@ -79,7 +79,7 @@ func main() {
             switch ev := e.(type) {
             case *kafka.Message:
                 if ev.TopicPartition.Error != nil {
-                    log.Printf("Delivery failed: %v", ev.TopicPartition.Error)
+                    log.Printf("Livraison échouée: %v", ev.TopicPartition.Error)
                 }
             }
         }
@@ -119,7 +119,6 @@ func main() {
                 continue
             }
 
-            // ⏱️ START STOPWATCH only on the very first real message
             if !firstMessageReceived {
                 startTime = time.Now()
                 firstMessageReceived = true
@@ -161,8 +160,8 @@ func main() {
         msgPerSec = float64(total) / duration.Seconds()
     }
 
-    log.Printf("✅ H5 Racing Bike terminé | total envoyé: %d", total)
-    log.Printf("⏱️ Temps de traitement RÉEL: %v", duration)
+    log.Printf("✅ Le User Processor à terminé | total envoyé: %d", total)
+    log.Printf("⏱️ Temps de traitement: %v", duration)
     log.Printf("🚀 Performance: %.2f messages/sec", msgPerSec)
 }
 
@@ -222,7 +221,7 @@ func fillCache(db *sql.DB, cache map[string]string, mu *sync.RWMutex, names []st
     query := fmt.Sprintf("SELECT nom, email FROM etudiants WHERE nom IN (%s)", strings.Join(placeholders, ","))
     rows, err := db.Query(query, args...)
     if err != nil {
-        log.Printf("Cache fill error: %v", err)
+        log.Printf("Erreur de remplissage de la cache: %v", err)
         return
     }
     defer rows.Close()
@@ -238,12 +237,12 @@ func fillCache(db *sql.DB, cache map[string]string, mu *sync.RWMutex, names []st
 }
 
 func warmupCache(db *sql.DB, cache map[string]string, mu *sync.RWMutex) {
-    log.Println("🔥 Warming up cache...")
+    log.Println("🔥 Warming up de la cache...")
     start := time.Now()
 
     rows, err := db.Query("SELECT nom, email FROM etudiants")
     if err != nil {
-        log.Printf("Cache warmup error: %v", err)
+        log.Printf("Erreur du cache warmup: %v", err)
         return
     }
     defer rows.Close()
@@ -259,7 +258,7 @@ func warmupCache(db *sql.DB, cache map[string]string, mu *sync.RWMutex) {
     }
     mu.Unlock()
 
-    log.Printf("✅ Cache warmed up: %d users loaded in %v", count, time.Since(start))
+    log.Printf("✅ Cache warmed up: %d utilisateurs chargés en %v", count, time.Since(start))
 }
 
 func getEmailFromCache(cache map[string]string, mu *sync.RWMutex, nom string) string {
@@ -279,7 +278,7 @@ func createKafkaMessage(key []byte, nom, email string) kafka.Message {
 }
 func produceMessage(producer *kafka.Producer, msg kafka.Message) {
     if err := producer.Produce(&msg, nil); err != nil {
-        log.Printf("Produce error: %v", err)
+        log.Printf("Erreur de production: %v", err)
     }
     totalProduced.Add(1)
 }
